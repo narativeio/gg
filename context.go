@@ -13,9 +13,8 @@ import (
 
 	"github.com/golang/freetype/raster"
 	"golang.org/x/image/draw"
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/f64"
+	"golang.org/x/image/math/fixed"
 )
 
 type LineCap int
@@ -73,7 +72,7 @@ type Context struct {
 	lineCap       LineCap
 	lineJoin      LineJoin
 	fillRule      FillRule
-	fontFace      font.Face
+	fontFace      FontFace
 	fontHeight    float64
 	matrix        Matrix
 	stack         []*Context
@@ -106,8 +105,6 @@ func NewContextForRGBA(im *image.RGBA) *Context {
 		strokePattern: defaultStrokeStyle,
 		lineWidth:     1,
 		fillRule:      FillRuleWinding,
-		fontFace:      basicfont.Face7x13,
-		fontHeight:    13,
 		matrix:        Identity(),
 	}
 }
@@ -689,18 +686,15 @@ func (dc *Context) DrawImageAnchored(im image.Image, x, y int, ax, ay float64) {
 
 // Text Functions
 
-func (dc *Context) SetFontFace(fontFace font.Face) {
-	dc.fontFace = fontFace
-	dc.fontHeight = float64(fontFace.Metrics().Height) / 64
+type FontFace interface {
+	Glyph(dot fixed.Point26_6, rs []rune, idx int) (dr image.Rectangle, mask image.Image, maskp image.Point, advance fixed.Int26_6, n int)
+	GlyphAdvance(rs []rune, idx int) (advance fixed.Int26_6, n int)
+	Kern(r0, r1 rune) fixed.Int26_6
 }
 
-func (dc *Context) LoadFontFace(path string, points float64) error {
-	face, err := LoadFontFace(path, points)
-	if err == nil {
-		dc.fontFace = face
-		dc.fontHeight = points * 72 / 96
-	}
-	return err
+func (dc *Context) SetFontFace(f FontFace, points float64) {
+	dc.fontFace = f
+	dc.fontHeight = points * 72 / 96
 }
 
 func (dc *Context) FontHeight() float64 {
@@ -708,36 +702,37 @@ func (dc *Context) FontHeight() float64 {
 }
 
 func (dc *Context) drawString(im *image.RGBA, s string, x, y float64) {
-	d := &font.Drawer{
-		Dst:  im,
-		Src:  image.NewUniform(dc.color),
-		Face: dc.fontFace,
-		Dot:  fixp(x, y),
-	}
-	// based on Drawer.DrawString() in golang.org/x/image/font/font.go
+	// Create attributes
+	dst := im
+	src := image.NewUniform(dc.color)
+	dot := fixp(x, y)
+
+	// Based on Drawer.DrawString() in golang.org/x/image/font/font.go
+	// Adapted for custom font face
 	prevC := rune(-1)
-	for _, c := range s {
+	rs := []rune(s)
+	for idx := 0; idx < len(rs); idx++ {
 		if prevC >= 0 {
-			d.Dot.X += d.Face.Kern(prevC, c)
+			dot.X += dc.fontFace.Kern(prevC, rs[idx])
 		}
-		dr, mask, maskp, advance, ok := d.Face.Glyph(d.Dot, c)
-		if !ok {
-			// TODO: is falling back on the U+FFFD glyph the responsibility of
-			// the Drawer or the Face?
-			// TODO: set prevC = '\ufffd'?
+		dr, mask, maskp, advance, n := dc.fontFace.Glyph(dot, rs, idx)
+		if n == 0 {
 			continue
 		}
-		sr := dr.Sub(dr.Min)
-		transformer := draw.BiLinear
-		fx, fy := float64(dr.Min.X), float64(dr.Min.Y)
-		m := dc.matrix.Translate(fx, fy)
-		s2d := f64.Aff3{m.XX, m.XY, m.X0, m.YX, m.YY, m.Y0}
-		transformer.Transform(d.Dst, s2d, d.Src, sr, draw.Over, &draw.Options{
-			SrcMask:  mask,
-			SrcMaskP: maskp,
-		})
-		d.Dot.X += advance
-		prevC = c
+		if mask != nil {
+			sr := dr.Sub(dr.Min)
+			transformer := draw.BiLinear
+			fx, fy := float64(dr.Min.X), float64(dr.Min.Y)
+			m := dc.matrix.Translate(fx, fy)
+			s2d := f64.Aff3{m.XX, m.XY, m.X0, m.YX, m.YY, m.Y0}
+			transformer.Transform(dst, s2d, src, sr, draw.Over, &draw.Options{
+				SrcMask:  mask,
+				SrcMaskP: maskp,
+			})
+		}
+		dot.X += advance
+		idx += n - 1
+		prevC = rs[idx]
 	}
 }
 
@@ -898,13 +893,9 @@ func (dc *Context) MeasureMultilineString(s string, lineSpacing float64) (width,
 	height = float64(len(lines)) * dc.fontHeight * lineSpacing
 	height -= (lineSpacing - 1) * dc.fontHeight
 
-	d := &font.Drawer{
-		Face: dc.fontFace,
-	}
-
 	// max width from lines
 	for _, line := range lines {
-		adv := d.MeasureString(line)
+		adv := dc.measureString(line)
 		currentWidth := float64(adv >> 6) // from gg.Context.MeasureString
 		if currentWidth > width {
 			width = currentWidth
@@ -917,11 +908,28 @@ func (dc *Context) MeasureMultilineString(s string, lineSpacing float64) (width,
 // MeasureString returns the rendered width and height of the specified text
 // given the current font face.
 func (dc *Context) MeasureString(s string) (w, h float64) {
-	d := &font.Drawer{
-		Face: dc.fontFace,
-	}
-	a := d.MeasureString(s)
+	a := dc.measureString(s)
 	return float64(a >> 6), dc.fontHeight
+}
+
+func (dc *Context) measureString(s string) (advance fixed.Int26_6) {
+	// Based on [golang.org/x/image/font].MeasureString()
+	// Adapted for multi rune font face
+	prevC := rune(-1)
+	rs := []rune(s)
+	for idx := 0; idx < len(rs); idx++ {
+		if prevC >= 0 {
+			advance += dc.fontFace.Kern(prevC, rs[idx])
+		}
+		a, n := dc.fontFace.GlyphAdvance(rs, idx)
+		if n == 0 {
+			continue
+		}
+		advance += a
+		idx += n - 1
+		prevC = rs[idx]
+	}
+	return
 }
 
 // WordWrap wraps the specified string to the given max width and current
