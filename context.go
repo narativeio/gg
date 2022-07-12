@@ -783,7 +783,6 @@ type DrawStringAnchoredOptions struct {
 
 type DrawStringUnderlinedOptions struct {
 	LineSpacing float64
-	LineWidth   float64
 }
 
 type DrawStringWrappedOptions struct {
@@ -842,15 +841,6 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 		im = image.NewRGBA(image.Rect(0, 0, dc.width, dc.height))
 	}
 
-	var udc *Context
-	if o.Underlined != nil {
-		// We need to create a new context otherwise it draws border path as well
-		udc = NewContextForRGBA(im)
-		udc.SetColor(dc.color)
-		udc.SetLineWidth(o.Underlined.LineWidth)
-		udc.matrix = dc.matrix
-	}
-
 	for _, l := range ls {
 		var ax, ay float64
 		if o.Wrapped != nil {
@@ -875,12 +865,12 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 		dc.drawString(im, l.line, l.x, l.y)
 
 		if o.Underlined != nil {
-			udc.DrawLine(l.x, l.y+o.Underlined.LineSpacing, l.x+w, l.y+o.Underlined.LineSpacing)
+			dc.DrawLine(l.x, l.y+o.Underlined.LineSpacing, l.x+w, l.y+o.Underlined.LineSpacing)
 		}
 	}
 
 	if o.Underlined != nil {
-		udc.Stroke()
+		dc.Stroke()
 	}
 
 	if dc.mask != nil {
