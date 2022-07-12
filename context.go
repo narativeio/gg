@@ -844,9 +844,11 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 
 	var udc *Context
 	if o.Underlined != nil {
+		// We need to create a new context otherwise it draws border path as well
 		udc = NewContextForRGBA(im)
 		udc.SetColor(dc.color)
 		udc.SetLineWidth(o.Underlined.LineWidth)
+		udc.matrix = dc.matrix
 	}
 
 	for _, l := range ls {
