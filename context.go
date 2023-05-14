@@ -783,6 +783,7 @@ type DrawStringAnchoredOptions struct {
 
 type DrawStringUnderlinedOptions struct {
 	LineSpacing float64
+	LineWidth   float64
 }
 
 type DrawStringWrappedOptions struct {
@@ -805,6 +806,9 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 		// sync h formula with MeasureMultilineString
 		h := float64(len(lines)) * dc.fontHeight * o.Wrapped.LineSpacing
 		h -= (o.Wrapped.LineSpacing - 1) * dc.fontHeight
+		if o.Underlined != nil {
+			h += o.Underlined.LineSpacing + o.Underlined.LineWidth/2
+		}
 
 		var ax, ay float64
 		if o.Anchored != nil {
@@ -878,12 +882,13 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 	}
 }
 
-func (dc *Context) MeasureMultilineString(s string, lineSpacing float64) (width, height float64) {
+func (dc *Context) MeasureMultilineString(s string, lineSpacing, underlineLineSpacing, underlineLineWidth float64) (width, height float64) {
 	lines := strings.Split(s, "\n")
 
 	// sync h formula with DrawStringWrapped
 	height = float64(len(lines)) * dc.fontHeight * lineSpacing
 	height -= (lineSpacing - 1) * dc.fontHeight
+	height += underlineLineSpacing + underlineLineWidth/2
 
 	// max width from lines
 	for _, line := range lines {
