@@ -756,23 +756,22 @@ func (dc *Context) DrawStringAnchored(s string, x, y, ax, ay float64) {
 // DrawStringWrapped word-wraps the specified string to the given max width
 // and then draws it at the specified anchor point using the given line
 // spacing and text alignment.
-func (dc *Context) DrawStringWrapped(s string, x, y, ax, ay, width, lineSpacing float64, align Align) {
+func (dc *Context) DrawStringWrapped(s string, x, y, ax, ay, width float64, align Align) {
 	dc.DrawStringWithOptions(s, x, y, DrawStringOptions{
 		Anchored: &DrawStringAnchoredOptions{
 			X: ax,
 			Y: ay,
 		},
 		Wrapped: &DrawStringWrappedOptions{
-			Align:       align,
-			LineSpacing: lineSpacing,
-			Width:       width,
+			Align: align,
+			Width: width,
 		},
 	})
 }
 
 type DrawStringOptions struct {
 	Anchored   *DrawStringAnchoredOptions
-	Underlined *DrawStringUnderlinedOptions
+	Underlined bool
 	Wrapped    *DrawStringWrappedOptions
 }
 
@@ -781,15 +780,9 @@ type DrawStringAnchoredOptions struct {
 	Y float64
 }
 
-type DrawStringUnderlinedOptions struct {
-	LineSpacing float64
-	LineWidth   float64
-}
-
 type DrawStringWrappedOptions struct {
-	Align       Align
-	LineSpacing float64
-	Width       float64
+	Align Align
+	Width float64
 }
 
 type drawStringWithOptionsLine struct {
@@ -798,17 +791,27 @@ type drawStringWithOptionsLine struct {
 	y    float64
 }
 
+// Whatever the font, firefox has a default line height set to 1.5 x font size therefore we do the same
+func (dc *Context) lineHeight() float64 {
+	return dc.fontHeight * 1.5
+}
+
+func (dc *Context) underlineLineSpacing() float64 {
+	return dc.fontHeight * 0.15
+}
+
+func (dc *Context) underlineLineWidth() float64 {
+	return dc.fontHeight * 0.08
+}
+
 func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOptions) {
 	var ls []drawStringWithOptionsLine
+	underlineLineSpacing := dc.underlineLineSpacing()
+	underlineLineWidth := dc.underlineLineWidth()
 	if o.Wrapped != nil {
 		lines := dc.WordWrap(s, o.Wrapped.Width)
 
-		// sync h formula with MeasureMultilineString
-		h := float64(len(lines)) * dc.fontHeight * o.Wrapped.LineSpacing
-		h -= (o.Wrapped.LineSpacing - 1) * dc.fontHeight
-		if o.Underlined != nil {
-			h += o.Underlined.LineSpacing + o.Underlined.LineWidth/2
-		}
+		h := dc.lineHeight() * float64(len(lines))
 
 		var ax, ay float64
 		if o.Anchored != nil {
@@ -828,9 +831,10 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 			ls = append(ls, drawStringWithOptionsLine{
 				line: line,
 				x:    x,
-				y:    y,
+				// TODO Compute the font-specific value to use here (depending on xHeight and others)
+				y: y + dc.fontHeight*0.1,
 			})
-			y += dc.fontHeight * o.Wrapped.LineSpacing
+			y += dc.lineHeight()
 		}
 	} else {
 		ls = []drawStringWithOptionsLine{{
@@ -868,13 +872,16 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 
 		dc.drawString(im, l.line, l.x, l.y)
 
-		if o.Underlined != nil {
-			dc.DrawLine(l.x, l.y+o.Underlined.LineSpacing, l.x+w, l.y+o.Underlined.LineSpacing)
+		if o.Underlined {
+			dc.DrawLine(l.x, l.y+underlineLineSpacing, l.x+w, l.y+underlineLineSpacing)
 		}
 	}
 
-	if o.Underlined != nil {
+	if o.Underlined {
+		lineWidth := dc.lineWidth
+		dc.SetLineWidth(underlineLineWidth)
 		dc.Stroke()
+		dc.SetLineWidth(lineWidth)
 	}
 
 	if dc.mask != nil {
@@ -882,13 +889,10 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 	}
 }
 
-func (dc *Context) MeasureMultilineString(s string, lineSpacing, underlineLineSpacing, underlineLineWidth float64) (width, height float64) {
+func (dc *Context) MeasureMultilineString(s string) (width, height float64) {
 	lines := strings.Split(s, "\n")
 
-	// sync h formula with DrawStringWrapped
-	height = float64(len(lines)) * dc.fontHeight * lineSpacing
-	height -= (lineSpacing - 1) * dc.fontHeight
-	height += underlineLineSpacing + underlineLineWidth/2
+	height = dc.lineHeight() * float64(len(lines))
 
 	// max width from lines
 	for _, line := range lines {
