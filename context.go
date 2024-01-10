@@ -13,6 +13,7 @@ import (
 
 	"github.com/golang/freetype/raster"
 	"golang.org/x/image/draw"
+	"golang.org/x/image/font"
 	"golang.org/x/image/math/f64"
 	"golang.org/x/image/math/fixed"
 )
@@ -690,6 +691,7 @@ type FontFace interface {
 	Glyph(dot fixed.Point26_6, rs []rune, idx int) (dr image.Rectangle, mask image.Image, maskp image.Point, advance fixed.Int26_6, n int)
 	GlyphAdvance(rs []rune, idx int) (advance fixed.Int26_6, n int)
 	Kern(r0, r1 rune) fixed.Int26_6
+	Metrics() font.Metrics
 }
 
 func (dc *Context) SetFontFace(f FontFace, points float64) {
@@ -827,12 +829,15 @@ func (dc *Context) DrawStringWithOptions(s string, x, y float64, o DrawStringOpt
 		case AlignRight:
 			x += o.Wrapped.Width
 		}
+		yFont := dc.fontHeight * 0.1
+		if xHeight := dc.fontFace.Metrics().XHeight; xHeight > 0 {
+			yFont = dc.lineHeight()/2 - dc.fontHeight + float64(xHeight.Round())/2
+		}
 		for _, line := range lines {
 			ls = append(ls, drawStringWithOptionsLine{
 				line: line,
 				x:    x,
-				// TODO Compute the font-specific value to use here (depending on xHeight and others)
-				y: y + dc.fontHeight*0.1,
+				y:    y + yFont,
 			})
 			y += dc.lineHeight()
 		}
